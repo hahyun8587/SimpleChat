@@ -1,14 +1,23 @@
+// https://github.com/hahyun8587/SimpleChat
+
 import java.net.*;
 import java.io.*;
 import java.util.*;
 
+/** 
+ * FOR UPDATE
+ * clear
+ * friends
+ * login 
+ * duplicate id check
+ * server ending
+*/
 public class ChatServer {
-
 	public static void main(String[] args) {
 		try{
 			ServerSocket server = new ServerSocket(10001);
 			System.out.println("Waiting connection...");
-			HashMap hm = new HashMap();
+			HashMap<String, PrintWriter> hm = new HashMap<String, PrintWriter>();
 			while(true){
 				Socket sock = server.accept();
 				ChatThread chatthread = new ChatThread(sock, hm);
@@ -23,14 +32,18 @@ public class ChatServer {
 class ChatThread extends Thread{
 	private Socket sock;
 	private String id;
+	private PrintWriter pw;
 	private BufferedReader br;
-	private HashMap hm;
+	private HashMap<String, PrintWriter> hm;
+	private String[] badStr = {"badLang1", "badLang2", "badLang3", "badLang4", "badLang5"};
 	private boolean initFlag = false;
-	public ChatThread(Socket sock, HashMap hm){
+	private int badCount; 
+
+	public ChatThread(Socket sock, HashMap<String, PrintWriter> hm){
 		this.sock = sock;
 		this.hm = hm;
 		try{
-			PrintWriter pw = new PrintWriter(new OutputStreamWriter(sock.getOutputStream()));
+			pw = new PrintWriter(new OutputStreamWriter(sock.getOutputStream()));
 			br = new BufferedReader(new InputStreamReader(sock.getInputStream()));
 			id = br.readLine();
 			broadcast(id + " entered.");
@@ -39,57 +52,131 @@ class ChatThread extends Thread{
 				hm.put(this.id, pw);
 			}
 			initFlag = true;
+			badCount = 0;
 		}catch(Exception ex){
 			System.out.println(ex);
 		}
 	} // construcor
+
 	public void run(){
 		try{
 			String line = null;
-			while((line = br.readLine()) != null){
-				if(line.equals("/quit"))
-					break;
-				if(line.indexOf("/to ") == 0){
-					sendmsg(line);
-				}else
-					broadcast(id + " : " + line);
+
+			while((line = br.readLine()) != null) {
+				if (containsBadLang(line))
+					displayWarning();	
+				else {	
+					if(line.equals("/quit"))
+						break;
+					else if (line.equals("/userlist"))
+						send_userlist();
+					else if(line.indexOf("/to ") == 0)
+						sendmsg(line);
+					else
+						broadcast(id + " : " + line);
+				}
 			}
-		}catch(Exception ex){
+		} catch (Exception ex) {
 			System.out.println(ex);
-		}finally{
-			synchronized(hm){
+		} finally {
+			synchronized(hm) {
 				hm.remove(id);
 			}
 			broadcast(id + " exited.");
-			try{
+			
+			try {
 				if(sock != null)
 					sock.close();
-			}catch(Exception ex){}
+			} catch (Exception ex){}
 		}
 	} // run
-	public void sendmsg(String msg){
-		int start = msg.indexOf(" ") +1;
-		int end = msg.indexOf(" ", start);
-		if(end != -1){
-			String to = msg.substring(start, end);
-			String msg2 = msg.substring(end+1);
-			Object obj = hm.get(to);
-			if(obj != null){
-				PrintWriter pw = (PrintWriter)obj;
-				pw.println(id + " whisphered. : " + msg2);
-				pw.flush();
-			} // if
+
+	// Checks if the message contains banned words
+	// get string from the user and reads the String array already initalized 
+	// returns true if the string contains certain string and returns false if it doesn't  
+	public boolean containsBadLang(String msg)
+	{	
+		for (String str : badStr) {
+			if (msg.indexOf(str) != -1) {
+				badCount++;
+
+				return true;
+			}
 		}
-	} // sendmsg
-	public void broadcast(String msg){
-		synchronized(hm){
-			Collection collection = hm.values();
-			Iterator iter = collection.iterator();
-			while(iter.hasNext()){
-				PrintWriter pw = (PrintWriter)iter.next();
-				pw.println(msg);
+		return false;
+	}
+	
+	// Print warnings to user
+	public void displayWarning()
+	{	
+		pw.printf("[WARNING] You used bad language %d times.\n", badCount);
+		pw.println("[WARNING] You will get penalty if you use bad language for 5 times."); // needs update
+		pw.flush();
+	}
+
+	// Print user's id whose accessing in the server 
+	// reads iterator that has keys of the hashmap and print all of them to own socketstream 
+	public void send_userlist()
+	{	
+		synchronized(hm) {
+			Set<String> set = hm.keySet();
+			Iterator<String> iter = set.iterator();
+			
+			pw.printf("Userlist [%d users]\n", hm.size());
+
+			while (iter.hasNext()) {
+				pw.println(iter.next());
 				pw.flush();
 			}
 		}
-	} // broadcast
+	}
+
+	public void sendmsg(String msg){
+		int start = msg.indexOf(" ") +1;
+		int end = msg.indexOf(" ", start);
+		
+		if (end != -1) {
+			String to = msg.substring(start, end);
+
+			if (to.equals(id)) {
+				pw.println("You can't whisper to yourself.");
+				pw.flush();
+			}
+			else {
+				String msg2 = msg.substring(end + 1);
+				PrintWriter pwOther = null;
+				
+				synchronized(hm) { 
+					pwOther = hm.get(to);
+				}
+
+				if(pwOther != null) {
+					pwOther.println(id + " whisphered. : " + msg2);
+					pwOther.flush();
+				} // if
+			} // else
+		}
+	} // sendmsg
+
+	public void broadcast(String msg){
+		synchronized(hm) {
+			Collection<PrintWriter> collection = hm.values();
+			Iterator<PrintWriter> iter = collection.iterator();
+			
+			while (iter.hasNext()) {
+				PrintWriter pwOther= iter.next();
+
+				if (pwOther != pw) {
+					pwOther.println(msg);
+					pwOther.flush();
+				} // if 
+			}
+		}
+	} // broadcast 
+
+	// getter (needs update)
+	public int getBadCount()
+	{
+		return badCount;
+	}
 }
